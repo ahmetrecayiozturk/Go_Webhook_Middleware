@@ -1,6 +1,6 @@
 # GoWebhookMiddleware — Multi-Tenant Webhook Ingest & Delivery Gateway
 
-Yüksek trafikli e-ticaret, ödeme ve SaaS sistemlerinden (**Stripe, Shopify, iyzico, PayTR, GitHub** vb.) gelen webhook'ları sıfır veri kaybıyla karşılayan, doğrulayan ve hedef ERP/backend sistemlerine güvenilir şekilde ileten **multi-instance, production-ready Go webhook ara katmanı**.
+Yüksek trafikli e-ticaret, ödeme ve SaaS sistemlerinden (**Stripe, Shopify, iyzico, PayTR, GitHub** vb.) gelen webhook'ları kalıcı outbox üzerinde doğrulayan, at-least-once teslimatla hedef ERP/backend sistemlerine güvenilir şekilde ileten **multi-instance Go webhook ara katmanı**.
 
 ---
 
@@ -49,7 +49,7 @@ Yüksek trafikli e-ticaret, ödeme ve SaaS sistemlerinden (**Stripe, Shopify, iy
 
 * **Multi-Tenant & IDOR İzolasyonu:** Her müşteri (`tenant`) için tek seferlik `whk_...` API anahtarı (DB'de SHA-256 hash) üretilir. Müşteriler kendi anahtarlarıyla yalnızca kendi route, teslimat denemeleri ve DLQ kayıtlarını yönetebilir; başka tenant kaynaklarına erişim `403 Forbidden`, süper admin uçlarına erişim `401 Unauthorized` ile engellenir.
 * **Aylık Event Kotası (`monthly_event_quota`):** Redis üzerinden tenant bazlı aylık kota zorlanır (`X-Quota-Limit`, `X-Quota-Used`). Mükerrer (duplicate) istekler kota harcamaz; limit aşımında `429 Too Many Requests` dönülür ve DB hatalarında sayaç geri alınır.
-* **Transactional Outbox & Ölçeklenebilir Worker Pool:** Gelen event'ler Redis idempotency kontrolünden geçip PostgreSQL `outbox_events` tablosuna yazılır. Worker pool, yapılandırılabilir `BATCH_SIZE` (varsayılan `50`) ve `FOR UPDATE SKIP LOCKED` ile race-condition olmadan paralel tüketir.
+* **Transactional Outbox & Ölçeklenebilir Worker Pool:** Gelen event'ler Redis idempotency kontrolünden geçip PostgreSQL `outbox_events` tablosuna yazılır. Worker pool, yapılandırılabilir `BATCH_SIZE` (varsayılan `50`) ve `FOR UPDATE SKIP LOCKED` ile race-condition olmadan paralel tüketir. Teslimat semantiği at-least-once'dır; hedef sistem `X-Webhook-Event-Id` ile duplicate teslimatı idempotent biçimde ele almalıdır.
 * **Dağıtık (Multi-Instance) Circuit Breaker:** Redis Lua script'leri ile tüm Go instance'ları arasında atomik çalışır. Arka arkaya 5 adet 5xx/timeout hatasında ilgili rotanın devresini 60 saniye `OPEN` yapar, event'lerin retry hakkını tüketmeden erteler ve `HALF-OPEN` modunda 15 saniyelik kendi kendini çözen probe kilidiyle tek test isteği gönderir. Redis kesintisinde otomatik in-memory fallback devreye girer.
 * **Yerleşik Sağlayıcı Doğrulayıcıları:** `stripe` (5 dk replay korumalı), `shopify`, `iyzico` (V3), `paytr` (düz metin `OK` ACK destekli), `generic_hmac` ve `none`.
 * **Akıllı Retry & Dead Letter Queue (DLQ):**
@@ -80,6 +80,10 @@ Yüksek trafikli e-ticaret, ödeme ve SaaS sistemlerinden (**Stripe, Shopify, iy
 ## Kurulum ve Çalıştırma
 
 ### Production Kurulumu
+
+### Database Migration'ları
+
+Uygulama başlangıcında `internal/database/migrations/*.sql` dosyalarını checksum kontrolüyle sırayla uygular. Yeni migration eklenirken yalnızca yeni, artımlı dosya ekleyin; eski dosyaların içeriğini değiştirmeyin. Docker Compose ilk açılışta `schema.sql` üzerinden tablo altyapısını da oluşturur.
 
 1. Ortam değişkenlerini hazırlayın:
 ```bash

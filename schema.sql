@@ -93,3 +93,12 @@ CREATE INDEX IF NOT EXISTS idx_delivery_attempts_route_event
 
 CREATE INDEX IF NOT EXISTS idx_delivery_attempts_retention
     ON delivery_attempts (created_at ASC);
+
+CREATE TABLE IF NOT EXISTS monthly_event_usage (
+    tenant_id BIGINT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    month VARCHAR(7) NOT NULL,
+    used BIGINT NOT NULL DEFAULT 0,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (tenant_id, month),
+    CONSTRAINT monthly_event_usage_used_nonnegative CHECK (used >= 0)
+);

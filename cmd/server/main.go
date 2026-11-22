@@ -33,6 +33,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("PostgreSQL bağlantısı kurulamadı: %v", err)
 	}
+	if err := database.Migrate(db); err != nil {
+		_ = db.Close()
+		log.Fatalf("Veritabanı migration'ları uygulanamadı: %v", err)
+	}
 
 	redisClient, err := database.NewRedisClient(cfg)
 	if err != nil {

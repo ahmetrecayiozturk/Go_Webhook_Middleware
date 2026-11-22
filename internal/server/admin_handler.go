@@ -495,6 +495,8 @@ type ReplayDLQRequest struct {
 	DLQIDs []int64 `json:"dlq_ids" validate:"required,min=1"`
 }
 
+const maxReplayDLQIDs = 100
+
 func (h *WebhookHandler) HandleReplayDLQ(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 
@@ -510,6 +512,10 @@ func (h *WebhookHandler) HandleReplayDLQ(w http.ResponseWriter, r *http.Request)
 	}
 	if err := h.validator.Struct(payload); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "Geçersiz ya da boş payload")
+		return
+	}
+	if len(payload.DLQIDs) > maxReplayDLQIDs {
+		writeJSONError(w, http.StatusRequestEntityTooLarge, "En fazla 100 DLQ event'i tek istekte replay edilebilir")
 		return
 	}
 

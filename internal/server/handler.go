@@ -164,6 +164,7 @@ func (h *WebhookHandler) HandleIngestWebhook(w http.ResponseWriter, r *http.Requ
 	}
 	// 6.5. Aylık Tenant Kota Kontrolü (Duplicate olmayan gerçek event'ler sayılır)
 	var quotaKey string
+	postgresQuotaUsed := false
 	if routeCfg.MonthlyEventQuota > 0 {
 		quotaKey = fmt.Sprintf("quota:t:%d:%s", routeCfg.TenantID, time.Now().UTC().Format("2006-01"))
 		const quotaTTLSeconds = int64(35 * 24 * 60 * 60) // 35 gün
@@ -174,6 +175,30 @@ func (h *WebhookHandler) HandleIngestWebhook(w http.ResponseWriter, r *http.Requ
 
 			if used > routeCfg.MonthlyEventQuota {
 				_ = h.redisClient.Decr(ctx, quotaKey).Err()
+				if redisIdemOK {
+					_ = h.redisClient.Del(ctx, idempotencyKey).Err()
+				}
+				metrics.WebhooksReceivedTotal.WithLabelValues(routeCfg.RouteSlug, "quota_exceeded").Inc()
+				writeJSONError(w, http.StatusTooManyRequests, "Aylık event kotası aşıldı")
+				return
+			}
+		} else {
+			log.Printf("Redis kota kontrolü kullanılamadı, PostgreSQL fallback: %v", qErr)
+			used, dbErr := h.consumePostgresQuota(ctx, routeCfg.TenantID)
+			if dbErr != nil {
+				log.Printf("PostgreSQL kota kontrolü hatası: %v", dbErr)
+				if redisIdemOK {
+					_ = h.redisClient.Del(ctx, idempotencyKey).Err()
+				}
+				metrics.WebhooksReceivedTotal.WithLabelValues(routeCfg.RouteSlug, "error").Inc()
+				writeJSONError(w, http.StatusServiceUnavailable, "Kota kontrolü geçici olarak kullanılamıyor")
+				return
+			}
+			postgresQuotaUsed = true
+			w.Header().Set("X-Quota-Limit", strconv.FormatInt(routeCfg.MonthlyEventQuota, 10))
+			w.Header().Set("X-Quota-Used", strconv.FormatInt(used, 10))
+			if used > routeCfg.MonthlyEventQuota {
+				_ = h.rollbackPostgresQuota(context.Background(), routeCfg.TenantID)
 				if redisIdemOK {
 					_ = h.redisClient.Del(ctx, idempotencyKey).Err()
 				}
@@ -207,7 +232,11 @@ func (h *WebhookHandler) HandleIngestWebhook(w http.ResponseWriter, r *http.Requ
 			_ = h.redisClient.Del(delCtx, idempotencyKey).Err()
 		}
 		if quotaKey != "" {
-			_ = h.redisClient.Decr(delCtx, quotaKey).Err()
+			if postgresQuotaUsed {
+				_ = h.rollbackPostgresQuota(delCtx, routeCfg.TenantID)
+			} else {
+				_ = h.redisClient.Decr(delCtx, quotaKey).Err()
+			}
 		}
 
 		log.Printf("PostgreSQL outbox insert hatası (route=%s): %v", routeSlug, err)
@@ -217,7 +246,11 @@ func (h *WebhookHandler) HandleIngestWebhook(w http.ResponseWriter, r *http.Requ
 	}
 	if rowsAffected == 0 {
 		if quotaKey != "" {
-			_ = h.redisClient.Decr(ctx, quotaKey).Err()
+			if postgresQuotaUsed {
+				_ = h.rollbackPostgresQuota(ctx, routeCfg.TenantID)
+			} else {
+				_ = h.redisClient.Decr(ctx, quotaKey).Err()
+			}
 		}
 		metrics.WebhooksReceivedTotal.WithLabelValues(routeCfg.RouteSlug, "duplicate").Inc()
 		provider.WriteAck(w, true)
@@ -260,6 +293,34 @@ func (h *WebhookHandler) HandleHealthCheck(w http.ResponseWriter, r *http.Reques
 
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("OK"))
+}
+
+func (h *WebhookHandler) consumePostgresQuota(ctx context.Context, tenantID int64) (int64, error) {
+	month := time.Now().UTC().Format("2006-01")
+	var used int64
+	err := h.db.QueryRowContext(ctx, `
+		INSERT INTO monthly_event_usage (tenant_id, month, used)
+		VALUES ($1, $2, 1)
+		ON CONFLICT (tenant_id, month)
+		DO UPDATE SET used = monthly_event_usage.used + 1,
+		              updated_at = NOW()
+		RETURNING used
+	`, tenantID, month).Scan(&used)
+	if err != nil {
+		return 0, err
+	}
+	return used, nil
+}
+
+func (h *WebhookHandler) rollbackPostgresQuota(ctx context.Context, tenantID int64) error {
+	month := time.Now().UTC().Format("2006-01")
+	_, err := h.db.ExecContext(ctx, `
+		UPDATE monthly_event_usage
+		SET used = GREATEST(used - 1, 0),
+		    updated_at = NOW()
+		WHERE tenant_id = $1 AND month = $2
+	`, tenantID, month)
+	return err
 }
 
 func writeJSONError(w http.ResponseWriter, statusCode int, message string) {

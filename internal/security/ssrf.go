@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"time"
 )
 
@@ -60,6 +61,27 @@ func NewSafeDialContext(allowPrivate bool) func(ctx context.Context, network, ad
 }
 
 func isBlockedIP(ip net.IP) bool {
+	if ip4 := ip.To4(); ip4 != nil {
+		addr, ok := netip.AddrFromSlice(ip4)
+		if !ok {
+			return true
+		}
+		addr = addr.Unmap()
+		reservedV4 := []netip.Prefix{
+			netip.MustParsePrefix("100.64.0.0/10"),
+			netip.MustParsePrefix("192.0.0.0/24"),
+			netip.MustParsePrefix("192.0.2.0/24"),
+			netip.MustParsePrefix("198.18.0.0/15"),
+			netip.MustParsePrefix("198.51.100.0/24"),
+			netip.MustParsePrefix("203.0.113.0/24"),
+			netip.MustParsePrefix("240.0.0.0/4"),
+		}
+		for _, prefix := range reservedV4 {
+			if prefix.Contains(addr) {
+				return true
+			}
+		}
+	}
 	return ip.IsLoopback() ||
 		ip.IsPrivate() ||
 		ip.IsLinkLocalUnicast() ||

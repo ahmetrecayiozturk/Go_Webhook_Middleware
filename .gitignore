@@ -1,6 +1,7 @@
 # Ortam değişkenleri (hassas veriler)
 .env
 .env.local
+.env.prod
 .env.*.local
 !.env.example
 
