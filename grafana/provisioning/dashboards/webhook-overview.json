@@ -1,0 +1,187 @@
+{
+  "uid": "webhook-middleware-v1",
+  "title": "Webhook Middleware — Production Overview",
+  "tags": ["webhooks", "go", "production"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "route_slug",
+        "label": "Route",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(webhook_received_total, route_slug)",
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "current": { "text": "All", "value": "$__all" },
+        "refresh": 2
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Incoming Webhooks (req/s)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (route_slug, status) (rate(webhook_received_total{route_slug=~\"$route_slug\"}[1m]))",
+          "legendFormat": "{{route_slug}} [{{status}}]"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps" } }
+    },
+    {
+      "id": 2,
+      "title": "Worker Delivery Outcomes (ev/s)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (route_slug, status) (rate(webhook_processed_total{route_slug=~\"$route_slug\"}[1m]))",
+          "legendFormat": "{{route_slug}} [{{status}}]"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" } }
+    },
+    {
+      "id": 3,
+      "title": "Target ERP Delivery Latency (p50 / p95 / p99)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le, route_slug) (rate(webhook_erp_delivery_duration_seconds_bucket{route_slug=~\"$route_slug\"}[5m])))",
+          "legendFormat": "p50 {{route_slug}}"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, route_slug) (rate(webhook_erp_delivery_duration_seconds_bucket{route_slug=~\"$route_slug\"}[5m])))",
+          "legendFormat": "p95 {{route_slug}}"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, route_slug) (rate(webhook_erp_delivery_duration_seconds_bucket{route_slug=~\"$route_slug\"}[5m])))",
+          "legendFormat": "p99 {{route_slug}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "id": 4,
+      "title": "In-Memory Queue Depth",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "webhook_queue_depth",
+          "legendFormat": "Pending Jobs in Channel"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "DLQ Events (Last 1h)",
+      "type": "stat",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(increase(webhook_processed_total{route_slug=~\"$route_slug\", status=\"dlq\"}[1h]))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1 },
+              { "color": "red", "value": 10 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "Circuit Breaker Open Deferrals (Last 1h)",
+      "type": "stat",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(increase(webhook_processed_total{route_slug=~\"$route_slug\", status=\"circuit_open\"}[1h]))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 50 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 7,
+      "title": "Invalid Signatures (Last 1h)",
+      "type": "stat",
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(increase(webhook_received_total{route_slug=~\"$route_slug\", status=\"invalid_signature\"}[1h]))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 5 },
+              { "color": "red", "value": 50 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 8,
+      "title": "Rate Limited Requests (Last 1h)",
+      "type": "stat",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(increase(webhook_received_total{route_slug=~\"$route_slug\", status=\"rate_limited\"}[1h]))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 10 },
+              { "color": "red", "value": 100 }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

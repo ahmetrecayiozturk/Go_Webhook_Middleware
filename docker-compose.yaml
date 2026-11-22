@@ -1,0 +1,139 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: webhook_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-webhook_db}
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - webhook_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-webhook_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: webhook_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - webhook_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: webhook_app
+    restart: unless-stopped
+    env_file:
+      - .env
+    expose:
+      - "8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    stop_grace_period: 25s
+    networks:
+      - webhook_net
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/api/v1/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: webhook_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      app:
+        condition: service_healthy
+    networks:
+      - webhook_net
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: webhook_prometheus
+    restart: unless-stopped
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      - app
+    networks:
+      - webhook_net
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: webhook_grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GF_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GF_ADMIN_PASSWORD:-admin}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+    networks:
+      - webhook_net
+
+  demo-studio:
+    profiles: ["demo"]
+    build:
+      context: .
+      dockerfile: tools/demo-studio/Dockerfile
+    container_name: webhook_demo_studio
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+      - "9000:9000"
+    env_file:
+      - .env
+    environment:
+      - API_BASE_URL=http://nginx
+      - DEMO_ROUTE_SLUG=demo-studio-route
+      - ADMIN_REPLAY_URL=http://nginx/api/v1/admin/replay-dlq
+    depends_on:
+      nginx:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    networks:
+      - webhook_net
+
+networks:
+  webhook_net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  grafana_data:

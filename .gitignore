@@ -1,0 +1,36 @@
+# Ortam değişkenleri (hassas veriler)
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Go derleme çıktıları ve test dosyaları
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.html
+webhook-server
+bin/
+dist/
+tmp/
+
+# Go workspace
+go.work
+go.work.sum
+
+# IDE ve editör dosyaları
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# İşletim sistemi dosyaları
+.DS_Store
+Thumbs.db
+
+# Loglar
+*.log

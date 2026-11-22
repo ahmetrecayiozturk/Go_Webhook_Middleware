@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="tr" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Go Webhook Middleware — Chaos & Demo Studio</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen p-6">
+  <div class="max-w-6xl mx-auto space-y-6">
+    <!-- Header -->
+    <div class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4">
+      <div>
+        <h1 class="text-2xl font-bold tracking-tight text-white">Go Webhook Middleware — Demo Studio</h1>
+        <p class="text-sm text-slate-400">Canlı Yük Motoru, Chaos Mock ERP Kontrolü ve DLQ Replay Merkezi</p>
+      </div>
+      <div class="flex gap-3">
+        <a href="http://localhost:3000/d/webhook-middleware-v1" target="_blank"
+           class="px-4 py-2 rounded-lg bg-orange-600 hover:bg-orange-500 text-sm font-medium transition">
+          Grafana Dashboard ↗
+        </a>
+        <a href="http://localhost:9090/targets" target="_blank"
+           class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-sm font-medium transition">
+          Prometheus ↗
+        </a>
+      </div>
+    </div>
+
+    <!-- Üst Grid: Yük Testi + Chaos ERP -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <!-- Yük Testi Paneli -->
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
+        <h2 class="text-lg font-semibold text-emerald-400">1. Yük Testi Motoru (Nginx → Go App)</h2>
+        <div class="grid grid-cols-3 gap-3">
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">Toplam İstek</label>
+            <input id="totalReq" type="number" value="500" min="1" max="20000"
+                   class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">Eşzamanlı Worker</label>
+            <input id="concurrency" type="number" value="25" min="1" max="200"
+                   class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">Duplicate (%)</label>
+            <input id="dupRate" type="number" value="20" min="0" max="100"
+                   class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm" />
+          </div>
+        </div>
+        <button id="btnLoad" onclick="startLoad()"
+                class="w-full py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 font-semibold text-sm transition">
+          Yük Testini Başlat
+        </button>
+
+        <div class="grid grid-cols-4 gap-2 pt-2 text-center">
+          <div class="bg-slate-950 rounded-lg p-2.5 border border-slate-800">
+            <div class="text-xs text-slate-400">Accepted</div>
+            <div id="stAccepted" class="text-lg font-bold text-emerald-400">0</div>
+          </div>
+          <div class="bg-slate-950 rounded-lg p-2.5 border border-slate-800">
+            <div class="text-xs text-slate-400">Duplicate</div>
+            <div id="stDuplicate" class="text-lg font-bold text-sky-400">0</div>
+          </div>
+          <div class="bg-slate-950 rounded-lg p-2.5 border border-slate-800">
+            <div class="text-xs text-slate-400">429 Limit</div>
+            <div id="stRate" class="text-lg font-bold text-amber-400">0</div>
+          </div>
+          <div class="bg-slate-950 rounded-lg p-2.5 border border-slate-800">
+            <div class="text-xs text-slate-400">Hız (RPS)</div>
+            <div id="stRPS" class="text-lg font-bold text-white">0</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Chaos Mock ERP Paneli -->
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
+        <div class="flex items-center justify-between">
+          <h2 class="text-lg font-semibold text-rose-400">2. Chaos Mock ERP Kontrolü (:9000)</h2>
+          <button onclick="resetStats()" class="text-xs px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300">
+            Sayaçları Sıfırla
+          </button>
+        </div>
+
+        <div class="space-y-3">
+          <div>
+            <div class="flex justify-between text-xs mb-1">
+              <span class="text-slate-300">500 Hata Oranı (Retry Tetikler)</span>
+              <span id="val500" class="font-mono text-amber-400">10%</span>
+            </div>
+            <input id="err500" type="range" min="0" max="100" value="10" oninput="updateChaos()" class="w-full accent-amber-500" />
+          </div>
+          <div>
+            <div class="flex justify-between text-xs mb-1">
+              <span class="text-slate-300">400 Hata Oranı (Doğrudan DLQ'ya Düşer)</span>
+              <span id="val400" class="font-mono text-rose-400">0%</span>
+            </div>
+            <input id="err400" type="range" min="0" max="100" value="0" oninput="updateChaos()" class="w-full accent-rose-500" />
+          </div>
+          <div>
+            <div class="flex justify-between text-xs mb-1">
+              <span class="text-slate-300">Yapay Gecikme (Latency)</span>
+              <span id="valLat" class="font-mono text-sky-400">100 ms</span>
+            </div>
+            <input id="latency" type="range" min="0" max="2000" step="50" value="100" oninput="updateChaos()" class="w-full accent-sky-500" />
+          </div>
+          <label class="flex items-center gap-2 text-sm text-slate-300 pt-1 cursor-pointer">
+            <input id="outage" type="checkbox" onchange="updateChaos()" class="w-4 h-4 accent-rose-600" />
+            <span>ERP Tam Kesinti Simülasyonu (503 Service Unavailable)</span>
+          </label>
+        </div>
+
+        <div class="grid grid-cols-4 gap-2 pt-1 text-center">
+          <div class="bg-slate-950 rounded-lg p-2 border border-slate-800">
+            <div class="text-xs text-slate-400">200 OK</div>
+            <div id="erp200" class="text-base font-bold text-emerald-400">0</div>
+          </div>
+          <div class="bg-slate-950 rounded-lg p-2 border border-slate-800">
+            <div class="text-xs text-slate-400">500 Retry</div>
+            <div id="erp500" class="text-base font-bold text-amber-400">0</div>
+          </div>
+          <div class="bg-slate-950 rounded-lg p-2 border border-slate-800">
+            <div class="text-xs text-slate-400">400 DLQ</div>
+            <div id="erp400" class="text-base font-bold text-rose-400">0</div>
+          </div>
+          <div class="bg-slate-950 rounded-lg p-2 border border-slate-800">
+            <div class="text-xs text-slate-400">503 Down</div>
+            <div id="erp503" class="text-base font-bold text-purple-400">0</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Alt Panel: DLQ Tablosu ve Tek Tıkla Replay -->
+    <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
+      <div class="flex items-center justify-between">
+        <h2 class="text-lg font-semibold text-sky-400">3. Dead Letter Queue (DLQ) & Admin Replay</h2>
+        <button onclick="replayAll()"
+                class="px-4 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-xs font-semibold transition">
+          Listelenenlerin Tümünü Replay Et
+        </button>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-sm">
+          <thead class="text-xs uppercase text-slate-400 border-b border-slate-800">
+            <tr>
+              <th class="py-2 pr-3">ID</th>
+              <th class="py-2 pr-3">Event ID</th>
+              <th class="py-2 pr-3">Hata Nedeni</th>
+              <th class="py-2 text-right">İşlem</th>
+            </tr>
+          </thead>
+          <tbody id="dlqBody" class="divide-y divide-slate-800/60 text-slate-300">
+            <tr><td colspan="4" class="py-4 text-center text-slate-500">DLQ temiz — bekleyen hatalı event yok.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentDLQIds = [];
+
+    async function updateChaos() {
+      const cfg = {
+        err500_rate: Number(document.getElementById('err500').value),
+        err400_rate: Number(document.getElementById('err400').value),
+        latency_ms: Number(document.getElementById('latency').value),
+        outage: document.getElementById('outage').checked
+      };
+      document.getElementById('val500').innerText = cfg.err500_rate + '%';
+      document.getElementById('val400').innerText = cfg.err400_rate + '%';
+      document.getElementById('valLat').innerText = cfg.latency_ms + ' ms';
+
+      await fetch('/api/chaos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cfg)
+      });
+    }
+
+    async function startLoad() {
+      const btn = document.getElementById('btnLoad');
+      btn.disabled = true;
+      btn.innerText = 'Yük Testi Çalışıyor...';
+
+      await fetch('/api/load', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          total_requests: Number(document.getElementById('totalReq').value),
+          concurrency: Number(document.getElementById('concurrency').value),
+          duplicate_rate: Number(document.getElementById('dupRate').value)
+        })
+      });
+    }
+
+    async function resetStats() {
+      await fetch('/api/stats/reset', { method: 'POST' });
+      poll();
+    }
+
+    async function replayIds(ids) {
+      if (!ids.length) return;
+      await fetch('/api/dlq/replay', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dlq_ids: ids })
+      });
+      setTimeout(poll, 500);
+    }
+
+    function replayAll() {
+      replayIds(currentDLQIds);
+    }
+
+    async function poll() {
+      try {
+        const [stRes, dlqRes] = await Promise.all([fetch('/api/stats'), fetch('/api/dlq')]);
+        const st = await stRes.json();
+        const dlq = await dlqRes.json();
+
+        document.getElementById('stAccepted').innerText = st.load.accepted;
+        document.getElementById('stDuplicate').innerText = st.load.duplicate;
+        document.getElementById('stRate').innerText = st.load.rate_limited;
+        document.getElementById('stRPS').innerText = st.load.rps ? st.load.rps.toFixed(0) : '0';
+
+        const btn = document.getElementById('btnLoad');
+        btn.disabled = st.load.running;
+        btn.innerText = st.load.running ? 'Yük Testi Çalışıyor...' : 'Yük Testini Başlat';
+
+        document.getElementById('erp200').innerText = st.erp.ok_200;
+        document.getElementById('erp500').innerText = st.erp.err_500;
+        document.getElementById('erp400').innerText = st.erp.err_400;
+        document.getElementById('erp503').innerText = st.erp.outage_503;
+
+        currentDLQIds = dlq.map(x => x.id);
+        const tbody = document.getElementById('dlqBody');
+        if (!dlq.length) {
+          tbody.innerHTML = '<tr><td colspan="4" class="py-4 text-center text-slate-500">DLQ temiz — bekleyen hatalı event yok.</td></tr>';
+        } else {
+          tbody.innerHTML = dlq.map(x => `
+            <tr>
+              <td class="py-2 pr-3 font-mono text-xs">${x.id}</td>
+              <td class="py-2 pr-3 font-mono text-xs">${x.event_id}</td>
+              <td class="py-2 pr-3 text-xs text-rose-300">${x.error_reason}</td>
+              <td class="py-2 text-right">
+                <button onclick="replayIds([${x.id}])" class="px-3 py-1 rounded bg-sky-700 hover:bg-sky-600 text-xs font-medium">
+                  Replay
+                </button>
+              </td>
+            </tr>
+          `).join('');
+        }
+      } catch (_) {}
+    }
+
+    setInterval(poll, 1500);
+    poll();
+  </script>
+</body>
+</html>

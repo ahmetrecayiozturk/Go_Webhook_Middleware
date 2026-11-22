@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Webhook Middleware — Control Plane</title>
+  <style>
+    :root { --bg:#0f172a; --card:#1e293b; --border:#334155; --text:#f1f5f9; --muted:#94a3b8; --accent:#3b82f6; --ok:#22c55e; --warn:#f59e0b; --err:#ef4444; }
+    * { box-sizing: border-box; font-family: system-ui, -apple-system, sans-serif; }
+    body { margin: 0; background: var(--bg); color: var(--text); }
+    header { display:flex; justify-content:space-between; align-items:center; padding:14px 24px; background:var(--card); border-bottom:1px solid var(--border); gap:12px; flex-wrap:wrap; }
+    header h1 { margin:0; font-size:18px; }
+    .auth-box { display:flex; gap:8px; align-items:center; }
+    input, select, textarea { background:#0f172a; color:var(--text); border:1px solid var(--border); border-radius:6px; padding:8px 10px; font-size:13px; }
+    button { background:var(--accent); color:#fff; border:none; border-radius:6px; padding:8px 14px; font-size:13px; font-weight:600; cursor:pointer; }
+    button:hover { opacity:.9; }
+    button.danger { background:var(--err); }
+    button.secondary { background:#334155; }
+    nav { display:flex; gap:8px; padding:12px 24px; border-bottom:1px solid var(--border); background:#111827; }
+    nav button { background:transparent; color:var(--muted); border:1px solid transparent; }
+    nav button.active { background:var(--card); color:var(--text); border-color:var(--border); }
+    main { padding:20px 24px; max-width:1280px; margin:0 auto; }
+    .panel { display:none; }
+    .panel.active { display:block; }
+    .card { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:16px; margin-bottom:16px; }
+    .card h2 { margin:0 0 12px 0; font-size:15px; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:10px; margin-bottom:12px; }
+    table { width:100%; border-collapse:collapse; font-size:13px; }
+    th, td { text-align:left; padding:10px 8px; border-bottom:1px solid var(--border); vertical-align:top; }
+    th { color:var(--muted); font-weight:600; }
+    .badge { display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:700; }
+    .badge.ok { background:rgba(34,197,94,.18); color:var(--ok); }
+    .badge.err { background:rgba(239,68,68,.18); color:var(--err); }
+    .badge.warn { background:rgba(245,158,11,.18); color:var(--warn); }
+    .snippet { max-width:360px; max-height:90px; overflow:auto; font-family:monospace; font-size:11px; background:#0b1220; padding:6px; border-radius:4px; white-space:pre-wrap; word-break:break-all; }
+    .toast { position:fixed; bottom:16px; right:16px; background:#1e293b; border:1px solid var(--accent); padding:10px 14px; border-radius:6px; font-size:13px; display:none; }
+    .row-actions { display:flex; gap:6px; flex-wrap:wrap; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Webhook Middleware — Control Plane</h1>
+    <div class="auth-box">
+      <input id="apiKeyInput" type="password" placeholder="X-API-KEY girin" style="width:240px" />
+      <button onclick="saveKeyAndLoad()">Bağlan</button>
+    </div>
+  </header>
+
+  <nav>
+    <button class="active" onclick="switchTab('routes', this)">Routes</button>
+    <button onclick="switchTab('attempts', this)">Delivery Attempts</button>
+    <button onclick="switchTab('dlq', this)">Dead Letter Queue</button>
+    <button onclick="switchTab('tenants', this)">Tenants</button>
+  </nav>
+
+  <main>
+    <!-- ROUTES -->
+    <section id="tab-routes" class="panel active">
+      <div class="card">
+        <h2>Yeni Route Oluştur</h2>
+        <div class="grid">
+          <select id="rTenantId"></select>
+          <input id="rSlug" placeholder="route_slug (örn: shop-iyzico-01)" />
+          <select id="rProvider">
+            <option value="none">none (test)</option>
+            <option value="generic_hmac">generic_hmac</option>
+            <option value="stripe">stripe</option>
+            <option value="shopify">shopify</option>
+            <option value="iyzico">iyzico</option>
+            <option value="paytr">paytr (key:salt)</option>
+          </select>
+          <input id="rTargetUrl" placeholder="https://erp.sirket.com/webhook" />
+          <input id="rInSecret" placeholder="Gelen Signing Secret (opsiyonel)" />
+          <input id="rOutSecret" placeholder="Çıkış Outgoing Secret (opsiyonel)" />
+          <input id="rRate" type="number" value="100" placeholder="Rate Limit / sn" />
+          <input id="rRetries" type="number" value="3" placeholder="Max Retries" />
+        </div>
+        <textarea id="rHeaders" rows="2" style="width:100%;margin-bottom:10px" placeholder='Hedef Auth Header JSON (opsiyonel): {"Authorization":"Bearer ..."}'></textarea>
+        <button onclick="createRoute()">Route Oluştur</button>
+      </div>
+
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <h2 style="margin:0">Route Listesi</h2>
+          <div class="row-actions">
+            <select id="filterRouteTenant" onchange="loadRoutes()"></select>
+            <button class="secondary" onclick="loadRoutes()">Yenile</button>
+          </div>
+        </div>
+        <table>
+          <thead><tr><th>ID</th><th>Slug & Ingest URL</th><th>Provider</th><th>Target URL</th><th>Limit/Retry</th><th>Durum</th><th>İşlem</th></tr></thead>
+          <tbody id="routesBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- DELIVERY ATTEMPTS -->
+    <section id="tab-attempts" class="panel">
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+          <h2 style="margin:0">Son Teslimat Denemeleri</h2>
+          <div class="row-actions">
+            <input id="attRouteId" type="number" placeholder="route_id" style="width:110px" />
+            <input id="attEventId" placeholder="event_id" style="width:180px" />
+            <button class="secondary" onclick="loadAttempts()">Filtrele / Yenile</button>
+          </div>
+        </div>
+        <table>
+          <thead><tr><th>ID</th><th>Route</th><th>Event ID</th><th>Deneme</th><th>HTTP</th><th>Süre</th><th>Hata / Response Snippet</th><th>Zaman</th></tr></thead>
+          <tbody id="attemptsBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- DLQ -->
+    <section id="tab-dlq" class="panel">
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+          <h2 style="margin:0">Dead Letter Queue (DLQ)</h2>
+          <div class="row-actions">
+            <input id="dlqRouteId" type="number" placeholder="route_id" style="width:110px" />
+            <button class="secondary" onclick="loadDLQ()">Yenile</button>
+            <button onclick="replaySelectedDLQ()">Seçilenleri Replay Et</button>
+          </div>
+        </div>
+        <table>
+          <thead><tr><th><input type="checkbox" onclick="toggleAllDLQ(this)" /></th><th>ID</th><th>Route</th><th>Event ID</th><th>Type</th><th>Hata Nedeni</th><th>Zaman</th><th>İşlem</th></tr></thead>
+          <tbody id="dlqBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- TENANTS -->
+    <section id="tab-tenants" class="panel">
+      <div class="card">
+        <h2>Yeni Tenant Oluştur</h2>
+        <div class="row-actions">
+          <input id="tName" placeholder="Müşteri Adı (örn: Acme A.Ş.)" style="width:260px" />
+          <input id="tQuota" type="number" value="100000" placeholder="Aylık Kota" style="width:150px" />
+          <button onclick="createTenant()">Tenant Oluştur</button>
+        </div>
+        <div id="newTenantKeyBox" style="margin-top:10px;display:none" class="snippet"></div>
+      </div>
+
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <h2 style="margin:0">Tenant Listesi</h2>
+          <button class="secondary" onclick="loadTenants()">Yenile</button>
+        </div>
+        <table>
+          <thead><tr><th>ID</th><th>Ad</th><th>Aylık Kota</th><th>Durum</th><th>Oluşturulma</th><th>İşlem</th></tr></thead>
+          <tbody id="tenantsBody"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    const getKey = () => sessionStorage.getItem('wh_admin_key') || '';
+    document.getElementById('apiKeyInput').value = getKey();
+
+    function toast(msg) {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.style.display = 'block';
+      setTimeout(() => el.style.display = 'none', 3200);
+    }
+
+    function esc(s) {
+      return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    function nullStr(v) {
+      if (v && typeof v === 'object' && 'String' in v) return v.Valid ? v.String : '';
+      return v || '';
+    }
+
+    async function api(path, opts = {}) {
+      const headers = Object.assign({ 'X-API-KEY': getKey() }, opts.headers || {});
+      if (opts.body) headers['Content-Type'] = 'application/json';
+      const res = await fetch(path, { ...opts, headers });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+      return data;
+    }
+
+    function switchTab(name, btn) {
+      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+      document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+      document.getElementById('tab-' + name).classList.add('active');
+      btn.classList.add('active');
+      if (name === 'routes') loadRoutes();
+      if (name === 'attempts') loadAttempts();
+      if (name === 'dlq') loadDLQ();
+      if (name === 'tenants') loadTenants();
+    }
+
+    async function saveKeyAndLoad() {
+      sessionStorage.setItem('wh_admin_key', document.getElementById('apiKeyInput').value.trim());
+      await loadTenants();
+      await loadRoutes();
+      toast('Bağlandı');
+    }
+
+    async function loadTenants() {
+      try {
+        const list = await api('/api/v1/admin/tenants');
+        const tbody = document.getElementById('tenantsBody');
+        tbody.innerHTML = list.map(t => `
+          <tr>
+            <td>${t.id}</td>
+            <td>${esc(t.name)}</td>
+            <td>${t.monthly_event_quota}</td>
+            <td><span class="badge ${t.is_active ? 'ok' : 'err'}">${t.is_active ? 'AKTİF' : 'PASİF'}</span></td>
+            <td>${new Date(t.created_at).toLocaleString('tr-TR')}</td>
+            <td class="row-actions">
+              <button class="secondary" onclick="toggleTenant(${t.id}, ${!t.is_active})">${t.is_active ? 'Pasife Al' : 'Aktifleştir'}</button>
+              <button onclick="rotateTenantKey(${t.id})">Key Yenile</button>
+            </td>
+          </tr>`).join('');
+
+        const opts = list.map(t => `<option value="${t.id}">#${t.id} — ${esc(t.name)}</option>`).join('');
+        document.getElementById('rTenantId').innerHTML = opts;
+        document.getElementById('filterRouteTenant').innerHTML = opts;
+      } catch (e) { toast('Tenant hatası: ' + e.message); }
+    }
+
+    async function createTenant() {
+      try {
+        const res = await api('/api/v1/admin/tenants', {
+          method: 'POST',
+          body: JSON.stringify({
+            name: document.getElementById('tName').value.trim(),
+            monthly_event_quota: Number(document.getElementById('tQuota').value) || 100000
+          })
+        });
+        const box = document.getElementById('newTenantKeyBox');
+        box.style.display = 'block';
+        box.textContent = 'Tenant API Key (sadece 1 kez gösterilir): ' + res.api_key;
+        document.getElementById('tName').value = '';
+        await loadTenants();
+        toast('Tenant oluşturuldu');
+      } catch (e) { toast('Hata: ' + e.message); }
+    }
+
+    async function toggleTenant(id, nextActive) {
+      try {
+        await api('/api/v1/admin/tenants/' + id, {
+          method: 'PATCH',
+          body: JSON.stringify({ is_active: nextActive })
+        });
+        await loadTenants();
+        toast(nextActive ? 'Tenant aktifleştirildi' : 'Tenant pasife alındı');
+      } catch (e) { toast('Hata: ' + e.message); }
+    }
+
+    async function rotateTenantKey(id) {
+      if (!confirm('Tenant #' + id + ' API anahtarı yenilensin mi? Eski anahtar hemen geçersiz olur.')) return;
+      try {
+        const res = await api('/api/v1/admin/tenants/' + id + '/rotate-key', { method: 'POST' });
+        const box = document.getElementById('newTenantKeyBox');
+        box.style.display = 'block';
+        box.textContent = 'Yeni Tenant #' + id + ' API Key (sadece 1 kez gösterilir): ' + res.api_key;
+        toast('API anahtarı yenilendi');
+      } catch (e) { toast('Hata: ' + e.message); }
+    }
+
+    async function loadRoutes() {
+      const tid = document.getElementById('filterRouteTenant').value;
+      if (!tid) return;
+      try {
+        const list = await api('/api/v1/admin/routes?tenant_id=' + tid);
+        const origin = window.location.origin;
+        document.getElementById('routesBody').innerHTML = list.map(r => `
+          <tr>
+            <td>${r.id}</td>
+            <td><strong>${esc(r.route_slug)}</strong><br/><small style="color:#94a3b8">${origin}/api/v1/ingest/${esc(r.route_slug)}</small></td>
+            <td><span class="badge warn">${esc(r.provider_type)}</span></td>
+            <td>${esc(r.target_url)}</td>
+            <td>${r.rate_limit_per_sec}/sn · ${r.max_retries}x</td>
+            <td><span class="badge ${r.is_active ? 'ok' : 'err'}">${r.is_active ? 'AKTİF' : 'PASİF'}</span></td>
+            <td><button class="danger" onclick="deleteRoute(${r.id})">Sil</button></td>
+          </tr>`).join('');
+      } catch (e) { toast('Route hatası: ' + e.message); }
+    }
+
+    async function createRoute() {
+      try {
+        let headersObj = undefined;
+        const rawH = document.getElementById('rHeaders').value.trim();
+        if (rawH) headersObj = JSON.parse(rawH);
+
+        await api('/api/v1/admin/routes', {
+          method: 'POST',
+          body: JSON.stringify({
+            tenant_id: Number(document.getElementById('rTenantId').value),
+            route_slug: document.getElementById('rSlug').value.trim(),
+            provider_type: document.getElementById('rProvider').value,
+            target_url: document.getElementById('rTargetUrl').value.trim(),
+            signing_secret: document.getElementById('rInSecret').value,
+            outgoing_secret: document.getElementById('rOutSecret').value,
+            target_headers: headersObj,
+            rate_limit_per_sec: Number(document.getElementById('rRate').value) || 100,
+            max_retries: Number(document.getElementById('rRetries').value) || 3
+          })
+        });
+        document.getElementById('rSlug').value = '';
+        await loadRoutes();
+        toast('Route oluşturuldu');
+      } catch (e) { toast('Hata: ' + e.message); }
+    }
+
+    async function deleteRoute(id) {
+      if (!confirm('Route #' + id + ' silinsin mi?')) return;
+      try {
+        await api('/api/v1/admin/routes/' + id, { method: 'DELETE' });
+        await loadRoutes();
+        toast('Route silindi');
+      } catch (e) { toast('Hata: ' + e.message); }
+    }
+
+    async function loadAttempts() {
+      try {
+        const q = new URLSearchParams({ limit: '50' });
+        const rid = document.getElementById('attRouteId').value.trim();
+        const eid = document.getElementById('attEventId').value.trim();
+        if (rid) q.set('route_id', rid);
+        if (eid) q.set('event_id', eid);
+
+        const list = await api('/api/v1/admin/attempts?' + q.toString());
+        document.getElementById('attemptsBody').innerHTML = list.map(a => {
+          const ok = a.http_status >= 200 && a.http_status < 300;
+          return `
+            <tr>
+              <td>${a.id}</td>
+              <td>#${a.route_id}</td>
+              <td><code>${esc(a.event_id)}</code></td>
+              <td>${a.attempt_number}</td>
+              <td><span class="badge ${ok ? 'ok' : 'err'}">${a.http_status || 'NET_ERR'}</span></td>
+              <td>${a.duration_ms} ms</td>
+              <td>
+                ${a.error_summary ? `<div style="color:#fca5a5;margin-bottom:4px">${esc(a.error_summary)}</div>` : ''}
+                ${a.response_body_snippet ? `<div class="snippet">${esc(a.response_body_snippet)}</div>` : '-'}
+              </td>
+              <td>${new Date(a.created_at).toLocaleString('tr-TR')}</td>
+            </tr>`;
+        }).join('');
+      } catch (e) { toast('Attempts hatası: ' + e.message); }
+    }
+
+    async function loadDLQ() {
+      try {
+        const q = new URLSearchParams({ limit: '50' });
+        const rid = document.getElementById('dlqRouteId').value.trim();
+        if (rid) q.set('route_id', rid);
+
+        const list = await api('/api/v1/admin/dlq?' + q.toString());
+        document.getElementById('dlqBody').innerHTML = list.map(d => `
+          <tr>
+            <td><input type="checkbox" class="dlq-chk" value="${d.id}" /></td>
+            <td>${d.id}</td>
+            <td>#${d.route_id}</td>
+            <td><code>${esc(d.event_id)}</code></td>
+            <td>${esc(d.event_type)}</td>
+            <td style="color:#fca5a5">${esc(nullStr(d.error_reason))}</td>
+            <td>${new Date(d.failed_at).toLocaleString('tr-TR')}</td>
+            <td><button onclick="replayIDs([${d.id}])">Replay</button></td>
+          </tr>`).join('');
+      } catch (e) { toast('DLQ hatası: ' + e.message); }
+    }
+
+    function toggleAllDLQ(master) {
+      document.querySelectorAll('.dlq-chk').forEach(c => c.checked = master.checked);
+    }
+
+    function replaySelectedDLQ() {
+      const ids = Array.from(document.querySelectorAll('.dlq-chk:checked')).map(c => Number(c.value));
+      if (!ids.length) return toast('En az bir kayıt seçin');
+      replayIDs(ids);
+    }
+
+    async function replayIDs(ids) {
+      try {
+        const res = await api('/api/v1/admin/replay-dlq', {
+          method: 'POST',
+          body: JSON.stringify({ dlq_ids: ids })
+        });
+        toast(res.replayed_count + ' event tekrar kuyruğa alındı');
+        await loadDLQ();
+      } catch (e) { toast('Replay hatası: ' + e.message); }
+    }
+
+    if (getKey()) saveKeyAndLoad();
+  </script>
+</body>
+</html>
