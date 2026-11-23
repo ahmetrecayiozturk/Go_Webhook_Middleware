@@ -31,13 +31,19 @@ type UpdateTenantRequest struct {
 
 const maxAllowedRetries = 10
 
-func isValidHTTPURL(raw string) bool {
+func isValidHTTPURL(raw string, requireHTTPS bool) bool {
 	u, err := url.ParseRequestURI(raw)
 	if err != nil {
 		return false
 	}
 	scheme := strings.ToLower(u.Scheme)
-	return (scheme == "http" || scheme == "https") && u.Host != ""
+	if u.Host == "" {
+		return false
+	}
+	if requireHTTPS {
+		return scheme == "https"
+	}
+	return scheme == "http" || scheme == "https"
 }
 
 func (h *WebhookHandler) HandleCreateTenant(w http.ResponseWriter, r *http.Request) {
@@ -223,9 +229,21 @@ func (h *WebhookHandler) HandleCreateRoute(w http.ResponseWriter, r *http.Reques
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if strings.EqualFold(strings.TrimSpace(req.ProviderType), "none") && !h.allowUnauthenticatedIngest {
+		writeJSONError(w, http.StatusBadRequest, "none provider yalnızca ALLOW_UNAUTHENTICATED_INGEST=true ortamında kullanılabilir")
+		return
+	}
+	if !strings.EqualFold(strings.TrimSpace(req.ProviderType), "none") && strings.TrimSpace(req.SigningSecret) == "" {
+		writeJSONError(w, http.StatusBadRequest, "Doğrulanabilir provider için signing_secret zorunludur")
+		return
+	}
 
-	if !isValidHTTPURL(req.TargetURL) {
-		writeJSONError(w, http.StatusBadRequest, "target_url yalnızca http veya https şeması içerebilir")
+	if !isValidHTTPURL(req.TargetURL, h.requireHTTPSTargets) {
+		message := "target_url yalnızca http veya https şeması içerebilir"
+		if h.requireHTTPSTargets {
+			message = "Üretim ortamında target_url HTTPS kullanmalıdır"
+		}
+		writeJSONError(w, http.StatusBadRequest, message)
 		return
 	}
 	if req.MaxRetries > maxAllowedRetries {
@@ -336,16 +354,6 @@ func (h *WebhookHandler) HandleUpdateRoute(w http.ResponseWriter, r *http.Reques
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-
-	if !isValidHTTPURL(req.TargetURL) {
-		writeJSONError(w, http.StatusBadRequest, "target_url yalnızca http veya https şeması içerebilir")
-		return
-	}
-	if req.MaxRetries > maxAllowedRetries {
-		writeJSONError(w, http.StatusBadRequest, "max_retries en fazla 10 olabilir")
-		return
-	}
-
 	existing, err := h.sqlc.GetRouteByID(r.Context(), routeID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -353,6 +361,33 @@ func (h *WebhookHandler) HandleUpdateRoute(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		writeJSONError(w, http.StatusInternalServerError, "Route sorgulanamadı")
+		return
+	}
+	if strings.EqualFold(strings.TrimSpace(req.ProviderType), "none") && !h.allowUnauthenticatedIngest {
+		writeJSONError(w, http.StatusBadRequest, "none provider yalnızca ALLOW_UNAUTHENTICATED_INGEST=true ortamında kullanılabilir")
+		return
+	}
+	if !strings.EqualFold(strings.TrimSpace(req.ProviderType), "none") {
+		signingSecretRequired := req.SigningSecret == nil || strings.TrimSpace(*req.SigningSecret) == ""
+		if signingSecretRequired {
+			plainSecret, secretErr := h.cipher.Decrypt(existing.SigningSecretEnc)
+			if secretErr != nil || strings.TrimSpace(plainSecret) == "" {
+				writeJSONError(w, http.StatusBadRequest, "Doğrulanabilir provider için signing_secret zorunludur")
+				return
+			}
+		}
+	}
+
+	if !isValidHTTPURL(req.TargetURL, h.requireHTTPSTargets) {
+		message := "target_url yalnızca http veya https şeması içerebilir"
+		if h.requireHTTPSTargets {
+			message = "Üretim ortamında target_url HTTPS kullanmalıdır"
+		}
+		writeJSONError(w, http.StatusBadRequest, message)
+		return
+	}
+	if req.MaxRetries > maxAllowedRetries {
+		writeJSONError(w, http.StatusBadRequest, "max_retries en fazla 10 olabilir")
 		return
 	}
 

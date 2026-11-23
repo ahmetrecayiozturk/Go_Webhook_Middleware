@@ -17,6 +17,8 @@ type Config struct {
 	WorkerCount                  int
 	BatchSize                    int
 	AllowPrivateTargets          bool
+	AllowUnauthenticatedIngest   bool
+	RequireHTTPSTargets          bool
 	DB_MAX_OPEN_CONNS            int
 	DB_MAX_IDLE_CONNS            int
 	DB_CONN_MAX_LIFETIME_MINUTES int
@@ -54,6 +56,15 @@ func Load() (*Config, error) {
 	if allowPrivateTargets != "true" && allowPrivateTargets != "false" {
 		log.Println("UYARI: ALLOW_PRIVATE_TARGETS environment variable is not set to 'true' or 'false'. Defaulting to 'false'.")
 	}
+	allowUnauthenticatedIngest := os.Getenv("ALLOW_UNAUTHENTICATED_INGEST") == "true"
+	requireHTTPSTargets := os.Getenv("REQUIRE_HTTPS_TARGETS")
+	if requireHTTPSTargets == "" {
+		requireHTTPSTargets = "true"
+	}
+	if requireHTTPSTargets != "true" && requireHTTPSTargets != "false" {
+		log.Println("UYARI: REQUIRE_HTTPS_TARGETS environment variable is not true veya false. Varsayilan olarak true kullaniliyor.")
+		requireHTTPSTargets = "true"
+	}
 
 	serverPort := os.Getenv("SERVER_PORT")
 	if serverPort == "" {
@@ -70,6 +81,8 @@ func Load() (*Config, error) {
 		WorkerCount:                  workerCount,
 		BatchSize:                    batchSize,
 		AllowPrivateTargets:          allowPrivateTargets == "true",
+		AllowUnauthenticatedIngest:   allowUnauthenticatedIngest,
+		RequireHTTPSTargets:          requireHTTPSTargets == "true",
 		DB_MAX_OPEN_CONNS:            parsePositiveInt(os.Getenv("DB_MAX_OPEN_CONNS"), 25),
 		DB_MAX_IDLE_CONNS:            parsePositiveInt(os.Getenv("DB_MAX_IDLE_CONNS"), 25),
 		DB_CONN_MAX_LIFETIME_MINUTES: parsePositiveInt(os.Getenv("DB_CONN_MAX_LIFETIME_MINUTES"), 5),

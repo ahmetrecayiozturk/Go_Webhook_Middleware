@@ -118,6 +118,8 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
 | `WORKER_COUNT` | `100` | Eşzamanlı worker goroutine sayısı |
 | `BATCH_SIZE` | `50` | `FetchPendingOutboxEvents` batch boyutu |
 | `ALLOW_PRIVATE_TARGETS` | `false` | Özel/yerel ağ IP'lerine SSRF izni |
+| `ALLOW_UNAUTHENTICATED_INGEST` | `false` | `none` provider ile doğrulamasız ingest izni |
+| `REQUIRE_HTTPS_TARGETS` | `true` | Üretim rotalarında hedef URL için HTTPS zorunluluğu |
 | `SLACK_ALERT_WEBHOOK_URL` | *(opsiyonel)* | DLQ bildirimleri için Slack Webhook URL |
 
 ### Servis Erişim Adresleri

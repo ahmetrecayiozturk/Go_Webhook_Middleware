@@ -2,8 +2,10 @@
 .env
 .env.local
 .env.prod
+.env.prod.*
 .env.*.local
 !.env.example
+!.env.prod.example
 
 # Go derleme çıktıları ve test dosyaları
 *.exe

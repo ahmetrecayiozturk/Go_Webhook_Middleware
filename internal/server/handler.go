@@ -35,13 +35,15 @@ var quotaIncrScript = redis.NewScript(`
 `)
 
 type WebhookHandler struct {
-	db          *sql.DB
-	sqlc        *sqlc_gen.Queries
-	redisClient *redis.Client
-	routeCache  *cache.RouteCache
-	cipher      *crypto.Cipher
-	limiter     *redis_rate.Limiter
-	validator   *validator.Validate
+	db                         *sql.DB
+	sqlc                       *sqlc_gen.Queries
+	redisClient                *redis.Client
+	routeCache                 *cache.RouteCache
+	cipher                     *crypto.Cipher
+	limiter                    *redis_rate.Limiter
+	validator                  *validator.Validate
+	allowUnauthenticatedIngest bool
+	requireHTTPSTargets        bool
 }
 
 func NewWebhookHandler(
@@ -50,15 +52,19 @@ func NewWebhookHandler(
 	sqlc *sqlc_gen.Queries,
 	routeCache *cache.RouteCache,
 	cipher *crypto.Cipher,
+	allowUnauthenticatedIngest bool,
+	requireHTTPSTargets bool,
 ) *WebhookHandler {
 	return &WebhookHandler{
-		db:          db,
-		redisClient: redisClient,
-		sqlc:        sqlc,
-		routeCache:  routeCache,
-		cipher:      cipher,
-		limiter:     redis_rate.NewLimiter(redisClient),
-		validator:   validator.New(),
+		db:                         db,
+		redisClient:                redisClient,
+		sqlc:                       sqlc,
+		routeCache:                 routeCache,
+		cipher:                     cipher,
+		limiter:                    redis_rate.NewLimiter(redisClient),
+		validator:                  validator.New(),
+		allowUnauthenticatedIngest: allowUnauthenticatedIngest,
+		requireHTTPSTargets:        requireHTTPSTargets,
 	}
 }
 func (h *WebhookHandler) HandleIngestWebhook(w http.ResponseWriter, r *http.Request) {

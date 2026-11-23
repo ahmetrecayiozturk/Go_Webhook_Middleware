@@ -7,6 +7,7 @@ import (
 
 func TestIsBlockedIP(t *testing.T) {
 	blocked := []string{
+		"0.0.0.0",
 		"127.0.0.1",
 		"10.0.0.1",
 		"172.16.0.1",
@@ -16,8 +17,13 @@ func TestIsBlockedIP(t *testing.T) {
 		"192.0.2.1",
 		"198.18.0.1",
 		"203.0.113.1",
+		"224.0.0.1",
+		"240.0.0.1",
 		"::1",
 		"fe80::1",
+		"fc00::1",
+		"ff02::1",
+		"2001:db8::1",
 	}
 	for _, raw := range blocked {
 		if !isBlockedIP(net.ParseIP(raw)) {

@@ -45,7 +45,15 @@ func main() {
 
 	queries := sqlc_gen.New(db)
 	routeCache := cache.NewRouteCache(redisClient, queries)
-	webhookHandler := server.NewWebhookHandler(db, redisClient, queries, routeCache, cipher)
+	webhookHandler := server.NewWebhookHandler(
+		db,
+		redisClient,
+		queries,
+		routeCache,
+		cipher,
+		cfg.AllowUnauthenticatedIngest,
+		cfg.RequireHTTPSTargets,
+	)
 	router := server.NewRouter(webhookHandler, cfg.AdminAPIKey)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
